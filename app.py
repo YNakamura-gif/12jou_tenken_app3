@@ -5,6 +5,9 @@ import json
 import datetime
 from pathlib import Path
 
+# デバッグモード
+DEBUG = True
+
 # ページ設定
 st.set_page_config(
     page_title="12条点検 Web アプリ",
@@ -24,14 +27,25 @@ if 'deterioration_name_input' not in st.session_state:
 if 'photo_number_input' not in st.session_state:
     st.session_state.photo_number_input = ""
 
+# デフォルトのマスターデータ
+DEFAULT_LOCATIONS = ["外壁", "屋根", "バルコニー", "玄関", "窓枠", "軒天", "基礎", "階段", "ベランダ", "庭", "駐車場", "フェンス", "門扉"]
+DEFAULT_DETERIORATIONS = ["ひび割れ", "剥離", "浮き", "欠損", "腐食", "錆び", "変色", "汚れ", "カビ", "藻", "漏水跡", "結露", "塗装劣化", "シーリング切れ", "シーリング劣化", "木部腐食", "金属部腐食", "タイル浮き", "タイル欠損", "雨漏り"]
+
 # マスターデータの読み込み
-def load_master_data(file_path, encoding='utf-8'):
+def load_master_data(file_path, default_data=None, encoding='utf-8'):
     # 試すエンコーディングのリスト
     encodings = ['utf-8', 'shift_jis', 'cp932', 'utf-8-sig']
     
+    # デバッグ情報
+    if DEBUG:
+        st.sidebar.write(f"ファイルパス: {file_path}")
+        st.sidebar.write(f"ファイル存在: {os.path.exists(file_path)}")
+    
+    # ファイルが存在しない場合はデフォルト値を返す
     if not os.path.exists(file_path):
-        st.warning(f"マスターデータファイルが見つかりません: {file_path}")
-        return []
+        if DEBUG:
+            st.sidebar.warning(f"マスターデータファイルが見つかりません: {file_path}")
+        return default_data if default_data is not None else []
     
     # 複数のエンコーディングを試す
     for enc in encodings:
@@ -39,11 +53,14 @@ def load_master_data(file_path, encoding='utf-8'):
             df = pd.read_csv(file_path, encoding=enc)
             return df.iloc[:, 0].tolist()
         except Exception as e:
+            if DEBUG:
+                st.sidebar.write(f"エンコーディング {enc} でエラー: {e}")
             continue
     
     # すべてのエンコーディングが失敗した場合
-    st.error(f"マスターデータの読み込みに失敗しました: {file_path}")
-    return []
+    if DEBUG:
+        st.sidebar.error(f"マスターデータの読み込みに失敗しました: {file_path}")
+    return default_data if default_data is not None else []
 
 # 予測変換機能
 def get_suggestions(input_text, master_list):
@@ -60,8 +77,18 @@ def get_suggestions(input_text, master_list):
     return suggestions
 
 # マスターデータの読み込み
-locations = load_master_data('master/locations.csv')
-deteriorations = load_master_data('master/deteriorations.csv')
+try:
+    locations = load_master_data('master/locations.csv', DEFAULT_LOCATIONS)
+    deteriorations = load_master_data('master/deteriorations.csv', DEFAULT_DETERIORATIONS)
+    
+    if DEBUG:
+        st.sidebar.write("場所のマスターデータ:", locations)
+        st.sidebar.write("劣化名のマスターデータ:", deteriorations)
+except Exception as e:
+    if DEBUG:
+        st.sidebar.error(f"マスターデータ読み込み中の予期せぬエラー: {e}")
+    locations = DEFAULT_LOCATIONS
+    deteriorations = DEFAULT_DETERIORATIONS
 
 # タイトル
 st.title("12条点検 Web アプリ")
@@ -258,9 +285,16 @@ with tab2:
     # データファイルの読み込み
     data_file = Path("data/inspection_data.csv")
     
+    if DEBUG:
+        st.sidebar.write(f"データファイルパス: {data_file}")
+        st.sidebar.write(f"データファイル存在: {data_file.exists()}")
+    
     if data_file.exists():
         try:
             df = pd.read_csv(data_file, encoding='utf-8-sig')
+            
+            if DEBUG:
+                st.sidebar.write(f"データ読み込み成功: {len(df)}行")
             
             # 検索・フィルタリング機能
             st.subheader("データ検索")
@@ -279,30 +313,40 @@ with tab2:
             # 検索条件の適用
             filtered_df = df.copy()
             
-            if search_date:
-                filtered_df = filtered_df[filtered_df["点検日"] == search_date.strftime("%Y-%m-%d")]
-            
-            if search_site:
-                filtered_df = filtered_df[filtered_df["現場ID"].str.contains(search_site, na=False)]
-            
-            if search_photo:
-                filtered_df = filtered_df[filtered_df["写真番号"].astype(str).str.contains(search_photo, na=False)]
+            try:
+                if search_date:
+                    date_str = search_date.strftime("%Y-%m-%d")
+                    filtered_df = filtered_df[filtered_df["点検日"] == date_str]
+                
+                if search_site:
+                    filtered_df = filtered_df[filtered_df["現場ID"].astype(str).str.contains(search_site, na=False)]
+                
+                if search_photo:
+                    filtered_df = filtered_df[filtered_df["写真番号"].astype(str).str.contains(search_photo, na=False)]
+            except Exception as e:
+                if DEBUG:
+                    st.sidebar.error(f"検索処理中にエラーが発生しました: {e}")
             
             # 検索結果の表示
             st.subheader("検索結果")
             st.dataframe(filtered_df, use_container_width=True)
             
             # CSVダウンロード機能
-            csv = filtered_df.to_csv(index=False, encoding='utf-8-sig')
-            st.download_button(
-                label="CSVダウンロード",
-                data=csv,
-                file_name="inspection_data_export.csv",
-                mime="text/csv",
-            )
+            try:
+                csv = filtered_df.to_csv(index=False, encoding='utf-8-sig')
+                st.download_button(
+                    label="CSVダウンロード",
+                    data=csv,
+                    file_name="inspection_data_export.csv",
+                    mime="text/csv",
+                )
+            except Exception as e:
+                st.error(f"CSVデータの生成中にエラーが発生しました: {e}")
             
         except Exception as e:
             st.error(f"データ読み込み中にエラーが発生しました: {e}")
+            if DEBUG:
+                st.sidebar.error(f"詳細エラー: {str(e)}")
     else:
         st.info("保存された点検データがありません。点検入力タブからデータを入力してください。")
 
